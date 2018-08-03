@@ -1,0 +1,231 @@
+<?php namespace ProcessWire;
+
+/**
+ * TfaTotp - ProcessWire two-factor authentication using TOTP
+ *
+ * Works with authenticator applications like Google Authenticator, Authy, Microsoft Authenticator,
+ * and likely any other application that is based on TOTP, RFC 6238.
+ * 
+ * @property string $siteTitle
+ * @property int $discrepancy
+ *
+ */
+class TfaTotp extends Tfa implements Module, ConfigurableModule {
+	
+	/**
+	 * @var \RobThree\Auth\TwoFactorAuth|null
+	 * 
+	 */
+	protected $tfa = null;
+
+	/**
+	 * Construct
+	 *
+	 */
+	public function __construct() {
+		parent::__construct();
+		$this->set('siteTitle', '');
+		$this->set('discrepancy', 1);
+	}
+	
+	/**
+	 * @return \RobThree\Auth\TwoFactorAuth
+	 * 
+	 */
+	public function tfa() {
+		if($this->tfa) return $this->tfa;
+		$this->wire('classLoader')->addNamespace('RobThree\\Auth', __DIR__ . '/TwoFactorAuth/lib/'); // add PSR-4 namespace
+		$title = $this->siteTitle ? $this->siteTitle : $this->wire('config')->httpHost;
+		$this->tfa = new \RobThree\Auth\TwoFactorAuth($title);
+		return $this->tfa; 
+	}
+
+	/**
+	 * Is TFA enabled for given user?
+	 *
+	 * @param User $user
+	 * @param array $settings
+	 * @return bool
+	 *
+	 */
+	public function enabledForUser(User $user, array $settings) {
+		return !empty($settings['secret']) && $settings['enabled'] === true;
+	}
+	
+	/**
+	 * Return true if code is valid or false if not
+	 *
+	 * @param User $user
+	 * @param string|int $code
+	 * @param array $settings
+	 * @return bool
+	 *
+	 */
+	public function isValidUserCode(User $user, $code, array $settings) {
+		if(!strlen($code)) return false;
+		if(empty($settings['secret'])) return false;
+		// verifyCode($secret, $code, $discrepancy = 1, $time = null, &$timeslice = 0)
+		$secret = $this->getSecret($settings);
+		$timeslice = 0;
+		$discrepancy = $this->discrepancy;
+		if($this->tfa()->verifyCode($secret, $code, $discrepancy, null, $timeslice) !== true) return false;
+		if($timeslice <= $settings['timeslice']) return false;
+		$settings['timeslice'] = $timeslice; 	
+		$this->saveUserSettings($user, $settings);
+		return true;
+	}
+	
+	/**
+	 * Get fields needed for a user to configure and confirm TFA from their user profile
+	 *
+	 * @param User $user
+	 * @param InputfieldWrapper $fieldset
+	 * @param array $settings
+	 *
+	 */
+	public function ___getUserSettingsInputfields(User $user, InputfieldWrapper $fieldset, $settings) {
+		parent::___getUserSettingsInputfields($user, $fieldset, $settings);
+		
+		if($this->enabledForUser($user, $settings)) {
+
+		} else if($this->wire('input')->requestMethod('POST')) {
+			$fieldset->new('text', 'conf_code'); 
+			
+		} else {
+			$secret = $this->tfa()->createSecret(160);
+			$qrCode = $this->tfa()->getQRCodeImageAsDataUri($user->name, $secret);
+			$qrCodeMarkup = "<img src='$qrCode' alt='QR code'>";
+			$secretMarkup = $this->_('Secret:') . " <code>" . chunk_split($secret, 4, ' ') . "</code>";
+			$instructions = $this->_('Scan the QR code OR copy/paste the “secret” into your authenticator app.');
+			
+			$this->sessionSet('secret', $secret);
+
+			$fieldset->new('text', 'conf_code', $this->_('Enable two-factor authentication'))
+				->description($this->_('Enter the code generated from your authenticator app below.'))
+				->prependMarkup("<p>$instructions</p><p>$qrCodeMarkup</p><p>$secretMarkup</p>");
+		} 
+	}
+
+	/**
+	 * Called when the user config fieldset has been processed but before settings have been saved
+	 *
+	 * @param User $user
+	 * @param InputfieldWrapper $fieldset
+	 * @param array $settings Associative array of new/current settings after processing
+	 * @param array $settingsPrev Associative array of previous settings
+	 * @return array Return $newSettings array (modified as needed)
+	 *
+	 */
+	public function ___processUserSettingsInputfields(User $user, InputfieldWrapper $fieldset, $settings, $settingsPrev) {
+	
+		$settings = parent::___processUserSettingsInputfields($user, $fieldset, $settings, $settingsPrev);
+		$secret = $this->sessionGet('secret');
+		
+		if($secret && $settings['conf_code']) {
+			$settings['encrypted'] = false;
+			if($this->tfa()->verifyCode($secret, $settings['conf_code']) === true) {
+				$settings['secret'] = $secret;
+				$settings['enabled'] = true;
+				$this->message($this->_('Confirmed, two-factor authentication is now enabled.'));
+			} else {
+				$settings['secret'] = '';
+				$settings['enabled'] = false;
+				$this->error($this->_('Unable to confirm the code that you entered. Please re-scan and try again.'));
+			}
+			$settings['conf_code'] = '';
+		}
+		
+		$this->sessionSet('secret', '');
+		
+		return $settings;
+	}
+
+	/**
+	 * Get default/blank user settings
+	 *
+	 * @param User $user
+	 * @return array
+	 *
+	 */
+	protected function getDefaultUserSettings(User $user) {
+		if($user) {}
+		return array(
+			'enabled' => false, 
+			'conf_code' => '', 
+			'secret' => '', // TFA secret
+			'encrypted' => false, // is the TFA “secret” encrypted? 
+			'timeslice' => 0, // last recorded timeslice value
+		);
+	}
+	/**
+	 * Save TFA data for given user to user_tfa field
+	 *
+	 * @param User $user
+	 * @param array $settings
+	 * @return bool
+	 * @throws WireException
+	 *
+	 */
+	public function saveUserSettings(User $user, array $settings) {
+		if(empty($settings['secret'])) {
+			$settings['encrypted'] = false;
+		} else if(empty($settings['encrypted'])) {
+			// secret is present, but not encrypted
+			$secret = $settings['secret'];
+			$secretEncrypted = $secret; // @todo encrypt secret
+			$settings['secret'] = $secretEncrypted; 
+			$settings['encrypted'] = $secret !== $secretEncrypted;
+		}
+		return parent::saveUserSettings($user, $settings);
+	}
+
+	/**
+	 * Get the TOTP secret
+	 * 
+	 * This just returns the $settings[secret] property, but the method is here
+	 * so that we can add encryption and decrypt encrypted secrets.
+	 * 
+	 * @param array $settings
+	 * @return string
+	 * 
+	 */
+	protected function getSecret(array $settings) {
+		if(empty($settings['secret'])) return '';
+		$secret = $settings['secret'];
+		if(!empty($settings['encrypted'])) {
+			// @todo decrypt secret
+		}
+		return $secret;
+	}
+
+	/**
+	 * Populate Inputfields needed to configure this module
+	 *
+	 * @param InputfieldWrapper $inputfields
+	 *
+	 */
+	public function getModuleConfigInputfields(InputfieldWrapper $inputfields) {
+		parent::getModuleConfigInputfields($inputfields);
+		$inputfields->new('text', 'siteTitle', $this->_('Website or app title'))
+			->description($this->_('This is so that the user can identify your site/app in their authenticator app.'))
+			->notes($this->_('If left blank, it will use the website’s HTTP hostname.'))
+			->val($this->siteTitle);
+		$inputfields->new('integer', 'discrepancy', $this->_('Discrepancy'))
+			->description($this->_('Number of previous and future codes to also accept. Each code is valid for 30 seconds.'))
+			->notes($this->_('A value of 1 means the current code plus 1 previous and next code are accepted (90 seconds worth).'))
+			->val($this->discrepancy); 
+	}
+
+	/**
+	 * Install module
+	 * 
+	 * @throws WireException
+	 * 
+	 */
+	public function ___install() {
+		if(!extension_loaded('curl') && !function_exists('curl_version')) {
+			throw new WireException('This module requires that PHP has the cURL extension installed'); 
+		}
+		parent::___install();
+	}
+}
