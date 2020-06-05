@@ -65,7 +65,7 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		if(!strlen($code)) return false;
 		if(empty($settings['secret'])) return false;
 		// verifyCode($secret, $code, $discrepancy = 1, $time = null, &$timeslice = 0)
-		$secret = $this->getSecret($settings);
+		$secret = $this->getSecret($user, $settings);
 		$timeslice = 0;
 		$discrepancy = $this->discrepancy;
 		if($this->tfa()->verifyCode($secret, $code, $discrepancy, null, $timeslice) !== true) return false;
@@ -101,6 +101,7 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 			$this->sessionSet('secret', $secret);
 
 			$fieldset->new('text', 'conf_code', $this->_('Enable two-factor authentication'))
+				->attr('autofocus', 'autofocus')
 				->description($this->_('Enter the code generated from your authenticator app below.'))
 				->prependMarkup("<p>$instructions</p><p>$qrCodeMarkup</p><p>$secretMarkup</p>");
 		} 
@@ -123,6 +124,7 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		
 		if($secret && $settings['conf_code']) {
 			$settings['encrypted'] = false;
+			$settings['conf_code'] = str_replace(array('-', ' '), '', $settings['conf_code']); 
 			if($this->tfa()->verifyCode($secret, $settings['conf_code']) === true) {
 				$settings['secret'] = $secret;
 				$settings['enabled'] = true;
@@ -172,7 +174,11 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		} else if(empty($settings['encrypted'])) {
 			// secret is present, but not encrypted
 			$secret = $settings['secret'];
-			$secretEncrypted = $secret; // @todo encrypt secret
+			if($this->supportsEncrypt()) {
+				$secretEncrypted = $this->encryptForUser($secret, $user); 
+			} else {
+				$secretEncrypted = $secret; 
+			}
 			$settings['secret'] = $secretEncrypted; 
 			$settings['encrypted'] = $secret !== $secretEncrypted;
 		}
@@ -180,22 +186,84 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	}
 
 	/**
-	 * Get the TOTP secret
+	 * Get the decrypted TOTP secret for user from their settings
 	 * 
-	 * This just returns the $settings[secret] property, but the method is here
-	 * so that we can add encryption and decrypt encrypted secrets.
-	 * 
+	 * @param User $user
 	 * @param array $settings
 	 * @return string
 	 * 
 	 */
-	protected function getSecret(array $settings) {
+	protected function getSecret(User $user, array $settings) {
 		if(empty($settings['secret'])) return '';
 		$secret = $settings['secret'];
-		if(!empty($settings['encrypted'])) {
-			// @todo decrypt secret
+		if(!empty($settings['encrypted']) && $this->supportsEncrypt()) {
+			$secret = $this->decryptForUser($secret, $user); 
 		}
 		return $secret;
+	}
+
+	/**
+	 * Is encryption supported here?
+	 * 
+	 * @return bool
+	 * 
+	 */
+	protected function supportsEncrypt() {
+		if(!function_exists('random_bytes')) return false;
+		if(!function_exists('sodium_crypto_secretbox')) return false;
+		if(!defined('SODIUM_CRYPTO_SECRETBOX_KEYBYTES')) return false;
+		return true;
+	}
+	
+	/**
+	 * Build a runtime-only encrypt key
+	 *
+	 * Key is a combination of user ID and non-changing config values not stored in the DB.
+	 * This ensures that if someone else gets a copy of the DB, they don’t have keys to decrypt.
+	 *
+	 * @param User $user
+	 * @return bool|string
+	 *
+	 */
+	protected function getUserEncryptKey(User $user) {
+		$key = $user->id . $this->config->userAuthSalt;
+		$keyLen = constant("SODIUM_CRYPTO_SECRETBOX_KEYBYTES");
+		$hashKey = sha1($key);
+		// next line not executed unless PHP changes the KEYBYTES (32) to something longer than 40
+		if(strlen($hashKey) < $keyLen) $hashKey .= date('GisDdSMY', $this->config->installed) . $key;
+		return substr($hashKey, 0, $keyLen);
+	}
+
+	/**
+	 * Encrypt a value for given user
+	 * 
+	 * @param string $value
+	 * @param User $user
+	 * @return string
+	 * 
+	 */
+	protected function encryptForUser($value, User $user) {
+		$key = $this->getUserEncryptKey($user);
+		$nonce = random_bytes(constant('SODIUM_CRYPTO_SECRETBOX_NONCEBYTES'));
+		$cipher = sodium_crypto_secretbox($value, $nonce, $key);
+		return base64_encode($nonce . $cipher);
+	}
+
+	/**
+	 * Decrypt a value for given user 
+	 * 
+	 * @param string $value
+	 * @param User $user
+	 * @return string
+	 * 
+	 */
+	protected function decryptForUser($value, User $user) {
+		$key = $this->getUserEncryptKey($user);
+		$value = base64_decode($value);
+		$nonce = substr($value, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+		$cipher = substr($value, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+		$value = sodium_crypto_secretbox_open($cipher, $nonce, $key);
+		return $value;
 	}
 
 	/**
