@@ -4,7 +4,12 @@
  * TfaTotp - ProcessWire two-factor authentication using TOTP
  *
  * Works with authenticator applications like Google Authenticator, Authy, Microsoft Authenticator,
- * and likely any other application that is based on TOTP, RFC 6238.
+ * and likely any other application that is based on TOTP, RFC 6238. 
+ * 
+ * Also uses and includes these libraries under MIT license:
+ * 
+ * - TwoFactorAuth TOTP library by RobThree: https://github.com/RobThree/TwoFactorAuth
+ * - QR Code Generator library] by Kazuhiko Arase: https://github.com/kazuhikoarase/qrcode-generator
  * 
  * @property string $siteTitle
  * @property int $discrepancy
@@ -29,14 +34,21 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	}
 	
 	/**
+	 * Get the TwoFactorAuth library instance
+	 * 
 	 * @return \RobThree\Auth\TwoFactorAuth
 	 * 
 	 */
 	public function tfa() {
 		if($this->tfa) return $this->tfa;
 		$this->wire('classLoader')->addNamespace('RobThree\\Auth', __DIR__ . '/TwoFactorAuth/lib/'); // add PSR-4 namespace
+		require_once(__DIR__ . '/TfaTotpQRCode.php');
 		$title = $this->siteTitle ? $this->siteTitle : $this->wire('config')->httpHost;
-		$this->tfa = new \RobThree\Auth\TwoFactorAuth($title);
+		$digits = 6; 
+		$period = 30; 
+		$algorithm = 'sha1';
+		$qr = new TfaTotp\LocalQRCodeProvider();
+		$this->tfa = new \RobThree\Auth\TwoFactorAuth($title, $digits, $period, $algorithm, $qr);
 		return $this->tfa; 
 	}
 
@@ -287,13 +299,8 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	/**
 	 * Install module
 	 * 
-	 * @throws WireException
-	 * 
 	 */
 	public function ___install() {
-		if(!extension_loaded('curl') && !function_exists('curl_version')) {
-			throw new WireException('This module requires that PHP has the cURL extension installed'); 
-		}
 		parent::___install();
 	}
 }
