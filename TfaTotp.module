@@ -32,6 +32,36 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		$this->set('siteTitle', '');
 		$this->set('discrepancy', 1);
 	}
+
+	/**
+	 * Get translated short name of this Tfa type
+	 * 
+	 * @return string
+	 * 
+	 */
+	public function getTfaTypeName() {
+		return $this->_('TOTP'); 
+	}
+
+	/**
+	 * Get translated Tfa type title
+	 *
+	 * @return string
+	 *
+	 */
+	public function getTfaTypeTitle() {
+		return $this->_('TOTP two-factor authentication');
+	}
+
+	/**
+	 * Get translated Tfa type summary
+	 *
+	 * @return string
+	 *
+	 */
+	public function getTfaTypeSummary() {
+		return $this->_('Works with Authy, Google Authenticator, Microsoft Authenticator, or any TOTP app.');
+	}
 	
 	/**
 	 * Get the TwoFactorAuth library instance
