@@ -4,22 +4,22 @@
  * TfaTotp - ProcessWire two-factor authentication using TOTP
  *
  * Works with authenticator applications like Google Authenticator, Authy, Microsoft Authenticator,
- * and likely any other application that is based on TOTP, RFC 6238. 
- * 
+ * and likely any other application that is based on TOTP, RFC 6238.
+ *
  * Also uses and includes these libraries under MIT license:
- * 
+ *
  * - TwoFactorAuth TOTP library by RobThree: https://github.com/RobThree/TwoFactorAuth
  * - QR Code Generator library] by Kazuhiko Arase: https://github.com/kazuhikoarase/qrcode-generator
- * 
+ *
  * @property string $siteTitle
  * @property int $discrepancy
  *
  */
 class TfaTotp extends Tfa implements Module, ConfigurableModule {
-	
+
 	/**
 	 * @var \RobThree\Auth\TwoFactorAuth|null
-	 * 
+	 *
 	 */
 	protected $tfa = null;
 
@@ -35,12 +35,12 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 
 	/**
 	 * Get translated short name of this Tfa type
-	 * 
+	 *
 	 * @return string
-	 * 
+	 *
 	 */
 	public function getTfaTypeName() {
-		return $this->_('TOTP'); 
+		return $this->_('TOTP');
 	}
 
 	/**
@@ -62,24 +62,23 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	public function getTfaTypeSummary() {
 		return $this->_('Works with Authy, Google Authenticator, Microsoft Authenticator, or any TOTP app.');
 	}
-	
+
 	/**
 	 * Get the TwoFactorAuth library instance
-	 * 
+	 *
 	 * @return \RobThree\Auth\TwoFactorAuth
-	 * 
+	 *
 	 */
 	public function tfa() {
 		if($this->tfa) return $this->tfa;
 		$this->wire('classLoader')->addNamespace('RobThree\\Auth', __DIR__ . '/TwoFactorAuth/lib/'); // add PSR-4 namespace
 		require_once(__DIR__ . '/TfaTotpQRCode.php');
 		$title = $this->siteTitle ? $this->siteTitle : $this->wire('config')->httpHost;
-		$digits = 6; 
-		$period = 30; 
-		$algorithm = 'sha1';
+		$digits = 6;
+		$period = 30;
 		$qr = new TfaTotp\LocalQRCodeProvider();
-		$this->tfa = new \RobThree\Auth\TwoFactorAuth($title, $digits, $period, $algorithm, $qr);
-		return $this->tfa; 
+		$this->tfa = new \RobThree\Auth\TwoFactorAuth($qr, $title, $digits, $period);
+		return $this->tfa;
 	}
 
 	/**
@@ -93,7 +92,7 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	public function enabledForUser(User $user, array $settings) {
 		return !empty($settings['secret']) && $settings['enabled'] === true;
 	}
-	
+
 	/**
 	 * Return true if code is valid or false if not
 	 *
@@ -112,11 +111,11 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		$discrepancy = $this->discrepancy;
 		if($this->tfa()->verifyCode($secret, $code, $discrepancy, null, $timeslice) !== true) return false;
 		if($timeslice <= $settings['timeslice']) return false;
-		$settings['timeslice'] = $timeslice; 	
+		$settings['timeslice'] = $timeslice;
 		$this->saveUserSettings($user, $settings);
 		return true;
 	}
-	
+
 	/**
 	 * Get fields needed for a user to configure and confirm TFA from their user profile
 	 *
@@ -127,26 +126,26 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	 */
 	public function ___getUserSettingsInputfields(User $user, InputfieldWrapper $fieldset, $settings) {
 		parent::___getUserSettingsInputfields($user, $fieldset, $settings);
-		
+
 		if($this->enabledForUser($user, $settings)) {
 
 		} else if($this->wire('input')->requestMethod('POST')) {
-			$fieldset->new('text', 'conf_code'); 
-			
+			$fieldset->new('text', 'conf_code');
+
 		} else {
 			$secret = $this->tfa()->createSecret(160);
 			$qrCode = $this->tfa()->getQRCodeImageAsDataUri($user->name, $secret);
 			$qrCodeMarkup = "<img src='$qrCode' alt='QR code'>";
 			$secretMarkup = $this->_('Secret:') . " <code>" . chunk_split($secret, 4, ' ') . "</code>";
 			$instructions = $this->_('Scan the QR code OR copy/paste the “secret” into your authenticator app.');
-			
+
 			$this->sessionSet('secret', $secret);
 
 			$fieldset->new('text', 'conf_code', $this->_('Enable two-factor authentication'))
 				->attr('autofocus', 'autofocus')
 				->description($this->_('Enter the code generated from your authenticator app below.'))
 				->prependMarkup("<p>$instructions</p><p>$qrCodeMarkup</p><p>$secretMarkup</p>");
-		} 
+		}
 	}
 
 	/**
@@ -160,13 +159,13 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	 *
 	 */
 	public function ___processUserSettingsInputfields(User $user, InputfieldWrapper $fieldset, $settings, $settingsPrev) {
-	
+
 		$settings = parent::___processUserSettingsInputfields($user, $fieldset, $settings, $settingsPrev);
 		$secret = $this->sessionGet('secret');
-		
+
 		if($secret && $settings['conf_code']) {
 			$settings['encrypted'] = false;
-			$settings['conf_code'] = str_replace(array('-', ' '), '', $settings['conf_code']); 
+			$settings['conf_code'] = str_replace(array('-', ' '), '', $settings['conf_code']);
 			if($this->tfa()->verifyCode($secret, $settings['conf_code']) === true) {
 				$settings['secret'] = $secret;
 				$settings['enabled'] = true;
@@ -178,9 +177,9 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 			}
 			$settings['conf_code'] = '';
 		}
-		
+
 		$this->sessionSet('secret', '');
-		
+
 		return $settings;
 	}
 
@@ -194,10 +193,10 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	protected function getDefaultUserSettings(User $user) {
 		if($user) {}
 		return array(
-			'enabled' => false, 
-			'conf_code' => '', 
+			'enabled' => false,
+			'conf_code' => '',
 			'secret' => '', // TFA secret
-			'encrypted' => false, // is the TFA “secret” encrypted? 
+			'encrypted' => false, // is the TFA “secret” encrypted?
 			'timeslice' => 0, // last recorded timeslice value
 		);
 	}
@@ -217,11 +216,11 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 			// secret is present, but not encrypted
 			$secret = $settings['secret'];
 			if($this->supportsEncrypt()) {
-				$secretEncrypted = $this->encryptForUser($secret, $user); 
+				$secretEncrypted = $this->encryptForUser($secret, $user);
 			} else {
-				$secretEncrypted = $secret; 
+				$secretEncrypted = $secret;
 			}
-			$settings['secret'] = $secretEncrypted; 
+			$settings['secret'] = $secretEncrypted;
 			$settings['encrypted'] = $secret !== $secretEncrypted;
 		}
 		return parent::saveUserSettings($user, $settings);
@@ -229,26 +228,26 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 
 	/**
 	 * Get the decrypted TOTP secret for user from their settings
-	 * 
+	 *
 	 * @param User $user
 	 * @param array $settings
 	 * @return string
-	 * 
+	 *
 	 */
 	protected function getSecret(User $user, array $settings) {
 		if(empty($settings['secret'])) return '';
 		$secret = $settings['secret'];
 		if(!empty($settings['encrypted']) && $this->supportsEncrypt()) {
-			$secret = $this->decryptForUser($secret, $user); 
+			$secret = $this->decryptForUser($secret, $user);
 		}
 		return $secret;
 	}
 
 	/**
 	 * Is encryption supported here?
-	 * 
+	 *
 	 * @return bool
-	 * 
+	 *
 	 */
 	protected function supportsEncrypt() {
 		if(!function_exists('random_bytes')) return false;
@@ -256,7 +255,7 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		if(!defined('SODIUM_CRYPTO_SECRETBOX_KEYBYTES')) return false;
 		return true;
 	}
-	
+
 	/**
 	 * Build a runtime-only encrypt key
 	 *
@@ -278,11 +277,11 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 
 	/**
 	 * Encrypt a value for given user
-	 * 
+	 *
 	 * @param string $value
 	 * @param User $user
 	 * @return string
-	 * 
+	 *
 	 */
 	protected function encryptForUser($value, User $user) {
 		$key = $this->getUserEncryptKey($user);
@@ -292,12 +291,12 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	}
 
 	/**
-	 * Decrypt a value for given user 
-	 * 
+	 * Decrypt a value for given user
+	 *
 	 * @param string $value
 	 * @param User $user
 	 * @return string
-	 * 
+	 *
 	 */
 	protected function decryptForUser($value, User $user) {
 		$key = $this->getUserEncryptKey($user);
@@ -323,12 +322,12 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		$inputfields->new('integer', 'discrepancy', $this->_('Discrepancy'))
 			->description($this->_('Number of previous and future codes to also accept. Each code is valid for 30 seconds.'))
 			->notes($this->_('A value of 1 means the current code plus 1 previous and next code are accepted (90 seconds worth).'))
-			->val($this->discrepancy); 
+			->val($this->discrepancy);
 	}
 
 	/**
 	 * Install module
-	 * 
+	 *
 	 */
 	public function ___install() {
 		parent::___install();

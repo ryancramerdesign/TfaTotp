@@ -4,18 +4,18 @@ require_once(__DIR__ . '/TwoFactorAuth/lib/Providers/Qr/IQRCodeProvider.php');
 
 /**
  * Custom QR Code Generator for ProcessWire TfaTotp module
- * 
+ *
  * This implements the IQRCodeProvider interface from the RobThree TwoFactorAuth library
  * and makes use of the Kazuhikoarase qrcode-generator for locally generated QR codes
- * rather than relying upon the external service-based QR code generators included with 
- * the TwoFactorAuth library. 
- * 
+ * rather than relying upon the external service-based QR code generators included with
+ * the TwoFactorAuth library.
+ *
  * QRCode-Generator library by Kazuhikoarase (https://github.com/kazuhikoarase/qrcode-generator/).
  * TwoFactorAuth library by RobThree (https://github.com/RobThree/TwoFactorAuth).
- * 
+ *
  */
 class LocalQRCodeProvider implements \RobThree\Auth\Providers\Qr\IQRCodeProvider {
-	public function getQRCodeImage($qrtext, $size) {
+	public function getQRCodeImage(string $qrtext, int $size): string {
 		if($size) {} // ignore
 		$qr = QRCode::getMinimumQRCode($qrtext, QR_ERROR_CORRECT_LEVEL_L);
 		ob_start();
@@ -23,10 +23,10 @@ class LocalQRCodeProvider implements \RobThree\Auth\Providers\Qr\IQRCodeProvider
 		imagegif($im);
 		$result = ob_get_contents();
 		ob_end_clean();
-		imagedestroy($im);
+		if (PHP_MAJOR_VERSION < 8) imagedestroy($im);
 		return $result;
 	}
-	public function getMimeType() {
+	public function getMimeType(): string {
 		return 'image/gif';
 	}
 }
@@ -1748,5 +1748,3 @@ class QRBitBuffer {
 		$this->length++;
 	}
 }
-
-
