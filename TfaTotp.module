@@ -73,7 +73,7 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		if($this->tfa) return $this->tfa;
 		$this->wire('classLoader')->addNamespace('RobThree\\Auth', __DIR__ . '/TwoFactorAuth/lib/'); // add PSR-4 namespace
 		require_once(__DIR__ . '/TfaTotpQRCode.php');
-		$title = $this->siteTitle ? $this->siteTitle : $this->wire('config')->httpHost;
+		$title = $this->siteTitle ?: $this->wire()->config->httpHost;
 		$digits = 6;
 		$period = 30;
 		$qr = new TfaTotp\LocalQRCodeProvider();
@@ -191,7 +191,6 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 	 *
 	 */
 	protected function getDefaultUserSettings(User $user) {
-		if($user) {}
 		return array(
 			'enabled' => false,
 			'conf_code' => '',
@@ -303,8 +302,7 @@ class TfaTotp extends Tfa implements Module, ConfigurableModule {
 		$value = base64_decode($value);
 		$nonce = substr($value, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
 		$cipher = substr($value, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
-		$value = sodium_crypto_secretbox_open($cipher, $nonce, $key);
-		return $value;
+		return sodium_crypto_secretbox_open($cipher, $nonce, $key);
 	}
 
 	/**
